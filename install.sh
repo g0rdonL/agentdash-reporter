@@ -7,7 +7,7 @@ set -e
 INSTALL_DIR="$HOME/.agentdash/reporter"
 CONFIG_PATH="$HOME/.agentdash/config.json"
 PLIST_PATH="$HOME/Library/LaunchAgents/com.agentdash.reporter.plist"
-REPO_URL="https://raw.githubusercontent.com/agentdash/reporter/main"
+REPO_URL="https://raw.githubusercontent.com/g0rdonL/agentdash-reporter/main"
 
 echo "AgentDash Reporter Installer"
 echo "============================"
