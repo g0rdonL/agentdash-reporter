@@ -1,0 +1,11 @@
+{
+  "name": "agentdash-reporter",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Reports local AI coding session status to AgentDash",
+  "main": "reporter.mjs",
+  "bin": { "agentdash-reporter": "./reporter.mjs" },
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/agentdash/reporter" }
+}

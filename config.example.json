@@ -1,0 +1,12 @@
+{
+  "api_key": "ad_live_your_key_here",
+  "api_url": "https://agentdash.ink",
+  "happy": {
+    "enabled": true,
+    "daemon_state_path": "~/.happy/daemon.state.json",
+    "session_titles_path": "~/.happy/session-titles.json"
+  },
+  "kimi": {
+    "enabled": false
+  }
+}
