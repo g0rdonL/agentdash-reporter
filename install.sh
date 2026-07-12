@@ -28,6 +28,8 @@ echo "Node.js: $(node --version) ✓"
 mkdir -p "$INSTALL_DIR"
 echo "Downloading reporter to $INSTALL_DIR..."
 curl -fsSL "$REPO_URL/reporter.mjs"   -o "$INSTALL_DIR/reporter.mjs"
+curl -fsSL "$REPO_URL/utils.mjs"      -o "$INSTALL_DIR/utils.mjs"
+curl -fsSL "$REPO_URL/claude.mjs"     -o "$INSTALL_DIR/claude.mjs"
 curl -fsSL "$REPO_URL/package.json"   -o "$INSTALL_DIR/package.json"
 chmod +x "$INSTALL_DIR/reporter.mjs"
 echo "Downloaded ✓"
@@ -49,8 +51,9 @@ else
 {
   "api_key": "$API_KEY",
   "api_url": "https://agentdash.ink",
-  "happy": { "enabled": true },
-  "kimi":  { "enabled": false }
+  "happy":  { "enabled": true },
+  "kimi":   { "enabled": false },
+  "claude": { "enabled": true }
 }
 EOF
   echo "Config saved ✓"

@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Reports local AI coding session status to AgentDash",
   "main": "reporter.mjs",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
   "bin": { "agentdash-reporter": "./reporter.mjs" },
   "engines": { "node": ">=18" },
   "license": "MIT",
