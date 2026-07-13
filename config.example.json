@@ -8,5 +8,8 @@
   },
   "kimi": {
     "enabled": false
+  },
+  "claude": {
+    "enabled": true
   }
 }
