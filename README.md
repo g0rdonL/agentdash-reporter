@@ -10,6 +10,7 @@ Runs every 60 seconds as a macOS background service (launchd). Zero runtime depe
 |-------|-----------------|
 | [Happy](https://happy.engineering) | Happy daemon `/list` API |
 | Kimi Code | Process scan (`pgrep`) |
+| Claude Code | Process scan & session files |
 
 ## Install
 

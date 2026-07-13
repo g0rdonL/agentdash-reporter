@@ -4,12 +4,13 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
-import { request as httpRequest } from 'http';
-import { request as httpsRequest } from 'https';
 import { homedir } from 'os';
 import { join } from 'path';
+import { VERSION, loadJson, resolvePath, httpPost, pathName } from './utils.mjs';
+import { collectClaudeSessions } from './claude.mjs';
 
-const VERSION = '1.0.0';
+export { VERSION, loadJson, resolvePath, httpPost, pathName };
+
 const CONFIG_PATH = join(homedir(), '.agentdash', 'config.json');
 
 // ── Config ──
@@ -31,63 +32,14 @@ function loadConfig() {
     return {
       api_key: cfg.api_key,
       api_url: (cfg.api_url || 'https://agentdash.ink').replace(/\/$/, ''),
-      happy: { enabled: cfg.happy?.enabled !== false, ...cfg.happy },
-      kimi:  { enabled: cfg.kimi?.enabled  === true,  ...cfg.kimi  },
+      happy:  { enabled: cfg.happy?.enabled !== false, ...cfg.happy },
+      kimi:   { enabled: cfg.kimi?.enabled  === true,  ...cfg.kimi  },
+      claude: { enabled: cfg.claude?.enabled !== false, ...cfg.claude },
     };
   } catch (e) {
     console.error(`[agentdash-reporter] Failed to parse config: ${e.message}`);
     process.exit(1);
   }
-}
-
-// ── Helpers ──
-
-function loadJson(path) {
-  try { return JSON.parse(readFileSync(path, 'utf-8')); } catch { return null; }
-}
-
-function resolvePath(p) {
-  return p ? p.replace(/^~/, homedir()) : null;
-}
-
-function httpPost(url, body, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const data = JSON.stringify(body);
-    const mod = u.protocol === 'https:' ? httpsRequest : httpRequest;
-    const req = mod({
-      hostname: u.hostname,
-      port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: u.pathname + u.search,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-        ...headers,
-      },
-    }, res => {
-      let raw = '';
-      res.on('data', d => raw += d);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
-        catch { resolve({ status: res.statusCode, body: raw }); }
-      });
-    });
-    req.on('error', reject);
-    req.setTimeout(5000, () => { req.destroy(); reject(new Error('timeout')); });
-    req.write(data);
-    req.end();
-  });
-}
-
-function pathName(p) {
-  if (!p || p === 'unknown') return 'unknown';
-  const parts = p.split('/').filter(Boolean);
-  const name = parts[parts.length - 1] || p;
-  if (['tmp', 'dev', 'worktree', 'worktrees'].includes(name) && parts.length >= 2) {
-    return parts.slice(-2).join('/');
-  }
-  return name;
 }
 
 // ── Happy sessions ──
@@ -215,8 +167,9 @@ async function main() {
   const started = Date.now();
 
   const events = [];
-  if (cfg.happy.enabled) events.push(...await collectHappySessions(cfg));
-  if (cfg.kimi.enabled)  events.push(...await collectKimiSessions());
+  if (cfg.happy.enabled)  events.push(...await collectHappySessions(cfg));
+  if (cfg.kimi.enabled)   events.push(...await collectKimiSessions());
+  if (cfg.claude.enabled) events.push(...await collectClaudeSessions(cfg));
 
   if (!events.length) {
     console.log('[agentdash-reporter] No active sessions found');
