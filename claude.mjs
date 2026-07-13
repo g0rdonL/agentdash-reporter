@@ -7,6 +7,13 @@ import { VERSION, resolvePath, pathName } from './utils.mjs';
 let execSync = nodeExecSync;
 export function setExecSync(fn) { execSync = fn; }
 
+// Forward-encode a real cwd the way Claude Code names its project dirs:
+// every '/' and '.' becomes '-'. Deterministic (unlike backward decoding,
+// which is ambiguous for hyphenated paths).
+export function encodeCwd(cwd) {
+  return String(cwd).replace(/[/.]/g, '-');
+}
+
 export async function collectClaudeSessions(cfg, overrideClaudeDir = null) {
   if (cfg?.claude?.enabled === false) return [];
 
@@ -43,7 +50,12 @@ export async function collectClaudeSessions(cfg, overrideClaudeDir = null) {
         const projectPath = join(projectsDir, projectDir);
         if (!statSync(projectPath).isDirectory()) continue;
 
-        const decodedCwd = projectDir.replace(/-/g, '/');
+        // Claude Code's dir-name encoding is LOSSY (both '/' and '-' and '.'
+        // map to '-'), so backward-decoding is ambiguous for hyphenated paths
+        // (e.g. -opt-gordon-trader). Instead: (a) prefer the exact `cwd` field
+        // stored inside the session JSONL lines, (b) match processes by
+        // encoding their real cwd FORWARD, which is deterministic.
+        const naiveDecodedCwd = projectDir.replace(/-/g, '/');
         const sessionFiles = readdirSync(projectPath).filter(f => f.endsWith('.jsonl'));
 
         for (const file of sessionFiles) {
@@ -52,6 +64,7 @@ export async function collectClaudeSessions(cfg, overrideClaudeDir = null) {
 
           let sessionId = file.replace(/\.jsonl$/, '');
           let lastActivity = stats.mtime;
+          let sessionCwd = null;
 
           // Extract metadata from last JSONL line if possible
           try {
@@ -61,14 +74,26 @@ export async function collectClaudeSessions(cfg, overrideClaudeDir = null) {
               const data = JSON.parse(lastLine);
               if (data.sessionId) sessionId = data.sessionId;
               if (data.timestamp) lastActivity = new Date(data.timestamp);
+              if (data.cwd) sessionCwd = data.cwd;
+            }
+            // cwd may only be on earlier lines; scan backwards a bit if missing
+            if (!sessionCwd) {
+              for (let i = lines.length - 1; i >= 0 && i >= lines.length - 20; i--) {
+                try {
+                  const d = JSON.parse(lines[i]);
+                  if (d.cwd) { sessionCwd = d.cwd; break; }
+                } catch { /* skip unparsable line */ }
+              }
             }
           } catch (e) { /* fallback to file stats */ }
+
+          const resolvedCwd = sessionCwd || naiveDecodedCwd;
 
           // Skip very old idle sessions (24h)
           const isRecentlyUpdated = (Date.now() - lastActivity.getTime()) < 24 * 60 * 60 * 1000;
 
           const matchingProcess = activeProcesses.find(p =>
-            p.cwd === decodedCwd || p.cwd === projectDir
+            p.cwd === resolvedCwd || encodeCwd(p.cwd) === projectDir
           );
 
           if (matchingProcess || isRecentlyUpdated) {
@@ -79,14 +104,14 @@ export async function collectClaudeSessions(cfg, overrideClaudeDir = null) {
             events.push({
               agent_id: sessionId,
               status: 'running',
-              issue_title: pathName(decodedCwd),
+              issue_title: pathName(resolvedCwd),
               progress_pct: 100,
               step_name: `claude · ${state}${matchingProcess ? ` · pid ${matchingProcess.pid}` : ''}`,
               metadata: {
                 reporter_version: VERSION,
                 source: 'claude',
                 state,
-                path: decodedCwd,
+                path: resolvedCwd,
                 last_activity: lastActivity.toISOString(),
                 host_pid: matchingProcess?.pid
               }
