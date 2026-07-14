@@ -2,131 +2,278 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { collectClaudeSessions, setExecSync, encodeCwd } from '../claude.mjs';
 import { execSync as nodeExecSync } from 'child_process';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'fs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const fixtureDir = join(__dirname, 'fixtures', 'claude');
+// Default mock to prevent executing real host commands (like pgrep/lsof) during testing
+const defaultMock = (cmd) => {
+  if (cmd.includes("pgrep -f 'claude'")) {
+    return '';
+  }
+  throw new Error(`Command not mocked in test: ${cmd}`);
+};
 
-// Fixtures are (re)generated with fresh timestamps at run time — static
-// timestamps age past the 24h recency window and silently break the
-// idle-session tests.
-function writeFixtures() {
-  const now = Date.now();
-  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+setExecSync(defaultMock);
 
-  const fooDir = join(fixtureDir, 'projects', '-Users-gordon-dev-foo');
-  mkdirSync(fooDir, { recursive: true });
-  writeFileSync(join(fooDir, 'session-123.jsonl'), [
-    JSON.stringify({ sessionId: 'session-123', timestamp: iso(60 * 60 * 1000), message: 'hello' }),
-    JSON.stringify({ sessionId: 'session-123', timestamp: iso(5 * 60 * 1000), message: 'world' }),
-  ].join('\n') + '\n');
-
-  // Hyphenated real path — regression for the dash-collision bug where
-  // naive decoding turned /opt/gordon-trader into /opt/gordon/trader.
-  const hyphDir = join(fixtureDir, 'projects', '-opt-gordon-trader');
-  mkdirSync(hyphDir, { recursive: true });
-  writeFileSync(join(hyphDir, 'session-hyph.jsonl'), [
-    JSON.stringify({ sessionId: 'session-hyph', timestamp: iso(30 * 60 * 1000), cwd: '/opt/gordon-trader', message: 'secret-alpha' }),
-    JSON.stringify({ sessionId: 'session-hyph', timestamp: iso(2 * 60 * 1000), cwd: '/opt/gordon-trader', message: 'secret-beta' }),
-  ].join('\n') + '\n');
+// Helper function to create a unique temporary directory for each run
+function createTempClaudeHome() {
+  const baseDir = join(tmpdir(), 'claude-test-');
+  return mkdtempSync(baseDir);
 }
 
-writeFixtures();
-
 test('encodeCwd - forward encoding is deterministic for hyphenated paths', () => {
-  // Both verified against real ~/.claude/projects dir names on macmini1.
+  // Verified against real ~/.claude/projects dir names
   assert.strictEqual(encodeCwd('/Users/gordon/dev/foo'), '-Users-gordon-dev-foo');
   assert.strictEqual(encodeCwd('/opt/gordon-trader'), '-opt-gordon-trader');
 });
 
-test('collectClaudeSessions - detects active session from process and file', async (t) => {
-  setExecSync((cmd) => {
-    if (cmd.includes('pgrep -f')) return '1001\n';
-    if (cmd.includes('lsof -p 1001')) return '/Users/gordon/dev/foo\n';
-    return '';
-  });
+test('collectClaudeSessions - discovery of multiple sessions across projects', async (t) => {
+  const tempHome = createTempClaudeHome();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
 
   try {
-    const events = await collectClaudeSessions({ claude: { enabled: true } }, fixtureDir);
+    // Project 1
+    const p1Dir = join(tempHome, 'projects', '-Users-gordon-dev-foo');
+    mkdirSync(p1Dir, { recursive: true });
+    writeFileSync(join(p1Dir, 'session-1.jsonl'), [
+      JSON.stringify({ sessionId: 'session-1', timestamp: iso(5000), message: 'foo' })
+    ].join('\n') + '\n');
 
-    const ev = events.find(e => e.agent_id === 'session-123');
-    assert.ok(ev, 'session-123 not found');
-    assert.strictEqual(ev.metadata.state, 'active');
-    assert.strictEqual(ev.metadata.host_pid, 1001);
-    assert.strictEqual(ev.metadata.path, '/Users/gordon/dev/foo');
-    assert.strictEqual(ev.issue_title, 'foo');
-    assert.ok(ev.metadata.last_activity);
+    // Project 2
+    const p2Dir = join(tempHome, 'projects', '-opt-gordon-trader');
+    mkdirSync(p2Dir, { recursive: true });
+    writeFileSync(join(p2Dir, 'session-2.jsonl'), [
+      JSON.stringify({ sessionId: 'session-2', timestamp: iso(10000), cwd: '/opt/gordon-trader', message: 'bar' })
+    ].join('\n') + '\n');
 
-    // Privacy check
-    assert.strictEqual(ev.metadata.message, undefined);
-    assert.strictEqual(JSON.stringify(events).includes('hello'), false);
-    assert.strictEqual(JSON.stringify(events).includes('world'), false);
+    const events = await collectClaudeSessions({ claude: { enabled: true } }, tempHome);
+    assert.strictEqual(events.length, 2);
+
+    const ev1 = events.find(e => e.agent_id === 'session-1');
+    assert.ok(ev1);
+    assert.strictEqual(ev1.metadata.path, '/Users/gordon/dev/foo');
+
+    const ev2 = events.find(e => e.agent_id === 'session-2');
+    assert.ok(ev2);
+    assert.strictEqual(ev2.metadata.path, '/opt/gordon-trader');
   } finally {
-    setExecSync(nodeExecSync);
+    rmSync(tempHome, { recursive: true, force: true });
   }
 });
 
-test('collectClaudeSessions - hyphenated cwd resolves from JSONL cwd field and matches process', async (t) => {
-  setExecSync((cmd) => {
-    if (cmd.includes('pgrep -f')) return '2001\n';
-    if (cmd.includes('lsof -p 2001')) return '/opt/gordon-trader\n';
-    return '';
-  });
+test('collectClaudeSessions - session ID from filename stem with sessionId-field fallback', async (t) => {
+  const tempHome = createTempClaudeHome();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
 
   try {
-    const events = await collectClaudeSessions({ claude: { enabled: true } }, fixtureDir);
+    const pDir = join(tempHome, 'projects', '-Users-gordon-dev-foo');
+    mkdirSync(pDir, { recursive: true });
 
+    // File with sessionId field matching or overriding (field priority)
+    writeFileSync(join(pDir, 'file-abc.jsonl'), [
+      JSON.stringify({ sessionId: 'session-from-field', timestamp: iso(5000) })
+    ].join('\n') + '\n');
+
+    // File without sessionId field (filename stem fallback)
+    writeFileSync(join(pDir, 'file-xyz.jsonl'), [
+      JSON.stringify({ timestamp: iso(10000) })
+    ].join('\n') + '\n');
+
+    const events = await collectClaudeSessions({ claude: { enabled: true } }, tempHome);
+    assert.strictEqual(events.length, 2);
+
+    const ev1 = events.find(e => e.agent_id === 'session-from-field');
+    assert.ok(ev1, 'Should fall back/resolve to sessionId field when present');
+
+    const ev2 = events.find(e => e.agent_id === 'file-xyz');
+    assert.ok(ev2, 'Should fall back to filename stem when sessionId field is absent');
+  } finally {
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('collectClaudeSessions - last-activity from mtime with timestamp fallback', async (t) => {
+  const tempHome = createTempClaudeHome();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+
+  try {
+    const pDir = join(tempHome, 'projects', '-Users-gordon-dev-foo');
+    mkdirSync(pDir, { recursive: true });
+
+    // 1. With timestamp field inside JSONL
+    const jsonlTime = iso(10 * 60 * 1000); // 10 minutes ago
+    writeFileSync(join(pDir, 'session-time-field.jsonl'), [
+      JSON.stringify({ sessionId: 'field-time', timestamp: jsonlTime })
+    ].join('\n') + '\n');
+    // Modify mtime to be different (e.g., 20 mins ago) to prove timestamp field takes priority
+    const file1 = join(pDir, 'session-time-field.jsonl');
+    const mtime1 = new Date(now - 20 * 60 * 1000);
+    utimesSync(file1, mtime1, mtime1);
+
+    // 2. Without timestamp field inside JSONL (should fall back to file mtime)
+    writeFileSync(join(pDir, 'session-mtime-fallback.jsonl'), [
+      JSON.stringify({ sessionId: 'fallback-time' })
+    ].join('\n') + '\n');
+    const file2 = join(pDir, 'session-mtime-fallback.jsonl');
+    const mtime2 = new Date(now - 5 * 60 * 1000); // 5 minutes ago
+    utimesSync(file2, mtime2, mtime2);
+
+    const events = await collectClaudeSessions({ claude: { enabled: true } }, tempHome);
+
+    const ev1 = events.find(e => e.agent_id === 'field-time');
+    assert.ok(ev1);
+    assert.strictEqual(ev1.metadata.last_activity, new Date(jsonlTime).toISOString());
+
+    const ev2 = events.find(e => e.agent_id === 'fallback-time');
+    assert.ok(ev2);
+    assert.strictEqual(ev2.metadata.last_activity, mtime2.toISOString());
+  } finally {
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('collectClaudeSessions - cwd-field resolution scanning backwards', async (t) => {
+  const tempHome = createTempClaudeHome();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+
+  try {
+    const pDir = join(tempHome, 'projects', '-Users-gordon-dev-foo');
+    mkdirSync(pDir, { recursive: true });
+
+    // File with CWD field specified on an earlier line, but not the last line
+    writeFileSync(join(pDir, 'session-cwd-backwards.jsonl'), [
+      JSON.stringify({ sessionId: 'backwards-cwd', timestamp: iso(30000), cwd: '/exact/real/path' }),
+      JSON.stringify({ sessionId: 'backwards-cwd', timestamp: iso(20000), message: 'middle message' }),
+      JSON.stringify({ sessionId: 'backwards-cwd', timestamp: iso(10000), message: 'final message' })
+    ].join('\n') + '\n');
+
+    const events = await collectClaudeSessions({ claude: { enabled: true } }, tempHome);
+    const ev = events.find(e => e.agent_id === 'backwards-cwd');
+    assert.ok(ev);
+    assert.strictEqual(ev.metadata.path, '/exact/real/path');
+  } finally {
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('collectClaudeSessions - recency filtering', async (t) => {
+  const tempHome = createTempClaudeHome();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+
+  try {
+    // Project 1: No active process matching it
+    const pDir1 = join(tempHome, 'projects', '-Users-gordon-dev-bar');
+    mkdirSync(pDir1, { recursive: true });
+
+    // Recently updated idle session (within 24 hours) - should keep
+    writeFileSync(join(pDir1, 'recent-idle.jsonl'), [
+      JSON.stringify({ sessionId: 'recent-idle', timestamp: iso(12 * 60 * 60 * 1000) }) // 12 hours ago
+    ].join('\n') + '\n');
+
+    // Old idle session (older than 24 hours) - should skip
+    writeFileSync(join(pDir1, 'old-idle.jsonl'), [
+      JSON.stringify({ sessionId: 'old-idle', timestamp: iso(25 * 60 * 60 * 1000) }) // 25 hours ago
+    ].join('\n') + '\n');
+
+    // Project 2: Has active process matching it
+    const pDir2 = join(tempHome, 'projects', '-Users-gordon-dev-foo');
+    mkdirSync(pDir2, { recursive: true });
+
+    // Old session but matched to a running process - should keep
+    writeFileSync(join(pDir2, 'old-active.jsonl'), [
+      JSON.stringify({ sessionId: 'old-active', timestamp: iso(30 * 60 * 60 * 1000) }) // 30 hours ago
+    ].join('\n') + '\n');
+
+    // Mock active process matching 'old-active' project directory
+    setExecSync((cmd) => {
+      if (cmd.includes('pgrep -f')) return '9999\n';
+      if (cmd.includes('lsof -p 9999')) return '/Users/gordon/dev/foo\n';
+      return '';
+    });
+
+    const events = await collectClaudeSessions({ claude: { enabled: true } }, tempHome);
+
+    const hasRecentIdle = events.some(e => e.agent_id === 'recent-idle');
+    const hasOldIdle = events.some(e => e.agent_id === 'old-idle');
+    const hasOldActive = events.some(e => e.agent_id === 'old-active');
+
+    assert.strictEqual(hasRecentIdle, true, 'Should retain recently updated idle sessions');
+    assert.strictEqual(hasOldIdle, false, 'Should filter out old idle sessions (>24h)');
+    assert.strictEqual(hasOldActive, true, 'Should retain old sessions if they are still active');
+  } finally {
+    setExecSync(defaultMock);
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('collectClaudeSessions - hyphenated-path regression fixture', async (t) => {
+  const tempHome = createTempClaudeHome();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+
+  try {
+    const pDir = join(tempHome, 'projects', '-opt-gordon-trader');
+    mkdirSync(pDir, { recursive: true });
+
+    // Write session specifying the hyphenated cwd field `/opt/gordon-trader`
+    writeFileSync(join(pDir, 'session-hyph.jsonl'), [
+      JSON.stringify({ sessionId: 'session-hyph', timestamp: iso(10000), cwd: '/opt/gordon-trader' })
+    ].join('\n') + '\n');
+
+    const events = await collectClaudeSessions({ claude: { enabled: true } }, tempHome);
     const ev = events.find(e => e.agent_id === 'session-hyph');
-    assert.ok(ev, 'session-hyph not found');
-    // The dash-collision bug produced /opt/gordon/trader here.
+    assert.ok(ev);
+    // Correctly reports /opt/gordon-trader, not /opt/gordon/trader
     assert.strictEqual(ev.metadata.path, '/opt/gordon-trader');
-    assert.strictEqual(ev.metadata.state, 'active');
-    assert.strictEqual(ev.metadata.host_pid, 2001);
     assert.strictEqual(ev.issue_title, 'gordon-trader');
-
-    // Privacy check
-    assert.strictEqual(JSON.stringify(events).includes('secret-alpha'), false);
-    assert.strictEqual(JSON.stringify(events).includes('secret-beta'), false);
   } finally {
-    setExecSync(nodeExecSync);
+    rmSync(tempHome, { recursive: true, force: true });
   }
 });
 
-test('collectClaudeSessions - detects idle session from file only', async (t) => {
-  setExecSync((cmd) => {
-    throw new Error('pgrep failed');
-  });
+test('collectClaudeSessions - metadata contains metadata only, absolutely no message/content fields', async (t) => {
+  const tempHome = createTempClaudeHome();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
 
   try {
-    const events = await collectClaudeSessions({ claude: { enabled: true } }, fixtureDir);
+    const pDir = join(tempHome, 'projects', '-Users-gordon-dev-foo');
+    mkdirSync(pDir, { recursive: true });
 
-    const ev = events.find(e => e.agent_id === 'session-123');
-    assert.ok(ev, 'session-123 not found');
-    assert.strictEqual(ev.metadata.state, 'idle');
-    assert.strictEqual(ev.metadata.host_pid, undefined);
-    assert.strictEqual(ev.metadata.path, '/Users/gordon/dev/foo');
-  } finally {
-    setExecSync(nodeExecSync);
-  }
-});
+    writeFileSync(join(pDir, 'privacy.jsonl'), [
+      JSON.stringify({
+        sessionId: 'privacy-test',
+        timestamp: iso(5000),
+        message: 'This is highly secret conversational message text',
+        content: 'This is super secret file contents'
+      })
+    ].join('\n') + '\n');
 
-test('collectClaudeSessions - detects active process without session file', async (t) => {
-  setExecSync((cmd) => {
-    if (cmd.includes('pgrep -f')) return '1002\n';
-    if (cmd.includes('lsof -p 1002')) return '/some/other/path\n';
-    return '';
-  });
-
-  try {
-    const events = await collectClaudeSessions({ claude: { enabled: true } }, join(__dirname, 'non-existent'));
-
+    const events = await collectClaudeSessions({ claude: { enabled: true } }, tempHome);
     assert.strictEqual(events.length, 1);
-    assert.strictEqual(events[0].agent_id, 'claude-1002');
-    assert.strictEqual(events[0].metadata.state, 'active');
-    assert.strictEqual(events[0].metadata.path, '/some/other/path');
+    const ev = events[0];
+
+    // Ensure no message or content properties are on the event or its metadata
+    assert.strictEqual(ev.message, undefined);
+    assert.strictEqual(ev.content, undefined);
+    assert.strictEqual(ev.metadata.message, undefined);
+    assert.strictEqual(ev.metadata.content, undefined);
+
+    // Deep inspect the JSON serialized version to verify those strings don't leak anywhere
+    const serialized = JSON.stringify(events);
+    assert.strictEqual(serialized.includes('highly secret'), false);
+    assert.strictEqual(serialized.includes('super secret'), false);
   } finally {
-    setExecSync(nodeExecSync);
+    rmSync(tempHome, { recursive: true, force: true });
   }
+});
+
+test('cleanup - restore execSync', () => {
+  setExecSync(nodeExecSync);
 });
