@@ -1,59 +1,89 @@
 # AgentDash Reporter
 
-Watches your local AI coding sessions and reports their status to [AgentDash](https://agentdash.ink).
+The AgentDash Reporter is a lightweight, zero-dependency Node.js service that monitors your local AI coding sessions and reports their status to [AgentDash](https://agentdash.ink). It acts as an emitter client, collecting local session events and reporting them in batches to the AgentDash status API.
 
-Runs every 60 seconds as a macOS background service (launchd). Zero runtime dependencies — just Node.js ≥ 18.
+## How It Works & Architecture
+The reporter runs as a macOS background service (`launchd`) every 60 seconds. During each run, it polls active agents from registered adapters and sends a JSON payload via an HTTP POST request to `<api_url>/api/v1/emitter/status/batch` with your `Authorization: Bearer <api_key>` header.
 
-## Supported agents
+## Adapters
 
-| Agent | Detection method |
-|-------|-----------------|
-| [Happy](https://happy.engineering) | Happy daemon `/list` API |
-| Kimi Code | Process scan (`pgrep`) |
-| Claude Code | Process scan & session files |
+### Happy Adapter
+* **Tool Detected:** Happy daemon (`happy.engineering`) and its child agents.
+* **Session Discovery:** Resolves `happy.daemon_state_path` (default `~/.happy/daemon.state.json`) to find the HTTP port and heartbeat. If active, queries `http://127.0.0.1:<port>/list`. For each child session, checks if `pid` is alive via `kill -0 <pid>` and queries its working directory via `lsof -p <pid>`.
+* **Emitted Fields:**
+  * `agent_id`: `happySessionId`
+  * `status`: `'running'`
+  * `issue_title`: Session title from `happy.session_titles_path` (default `~/.happy/session-titles.json`) or the basename of `cwd`.
+  * `progress_pct`: `100`
+  * `step_name`: `"<flavor> · pid <pid>"` (flavor: `'claude'`, `'kimi'`, `'gemini'`, or `'codex'`).
+  * `metadata`: `{ reporter_version, source: 'happy', flavor, path, host_pid }`
 
-## Install
+### Kimi Adapter
+* **Tool Detected:** Running Kimi Code processes.
+* **Session Discovery:** Runs process scanning via `pgrep -f 'Kimi Code'`. Discovers the session's working directory using `lsof -p <pid>`. Does not query or read any session files from disk.
+* **Emitted Fields:**
+  * `agent_id`: `"kimi-<pid>"`
+  * `status`: `'running'`
+  * `issue_title`: Cleaned basename of `cwd`.
+  * `progress_pct`: `100`
+  * `step_name`: `"kimi · pid <pid>"`
+  * `metadata`: `{ reporter_version, source: 'kimi', path, host_pid }`
 
+### Claude Code Adapter
+* **Tool Detected:** Claude Code CLI processes and session files.
+* **Session Discovery:**
+  1. Process scans via `pgrep -f 'claude'` to find running Claude processes and their `cwd` using `lsof`.
+  2. Scans `~/.claude/projects/` directory. Claude Code encodes project directories by replacing `/` and `.` with `-` (e.g. `-Users-gordon-dev-foo`).
+  3. Inside each project directory, scans for `*.jsonl` session files. Parses the last line to extract `sessionId`, `timestamp`, and `cwd`. (If `cwd` is missing, scans up to 20 lines backward).
+* **Emitted Fields:**
+  * `agent_id`: `sessionId` from session file, or `"claude-<pid>"` if fileless.
+  * `status`: `'running'`
+  * `issue_title`: Cleaned basename of resolved directory.
+  * `progress_pct`: `100`
+  * `step_name`: `"claude · <state> · pid <pid>"` (where `state` is `'active'` or `'idle'`).
+  * `metadata`: `{ reporter_version, source: 'claude', state, path, last_activity, host_pid }`
+
+## Session State Derivation
+The reporter code only emits a `status` of `'running'`. It has **no** native concept or state variables for `thinking`, `waiting`, or `disconnected`. State metadata is limited to:
+* **`active`**: A Claude Code session with a running process (or any running Happy/Kimi session).
+* **`idle`**: A Claude Code session without an active process, updated within the last 24 hours.
+
+## Configuration & Environment Values
+Config is loaded from `~/.agentdash/config.json`. The codebase reads the following keys:
+* **`api_key`**: (Required) AgentDash API key starting with `ad_live_`. No default.
+* **`api_url`**: Backend URL. Default: `"https://agentdash.ink"` (trailing slash is stripped).
+* **`happy.enabled`**: Default: `true`.
+* **`happy.daemon_state_path`**: Default: `"~/.happy/daemon.state.json"`.
+* **`happy.session_titles_path`**: Default: `"~/.happy/session-titles.json"`.
+* **`kimi.enabled`**: Default: `false`.
+* **`claude.enabled`**: Default: `true`.
+* **`HOME`**: The primary environment variable used to resolve path tildes (`~`) and locate config/cache files.
+
+## Developer Interface & How to Run
+### Running the Reporter
+Run manually as a single-execution command:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/g0rdonL/agentdash-reporter/main/install.sh | bash
+node reporter.mjs
 ```
+The plist service runs it every 60s, logging output to `/tmp/agentdash-reporter.log`.
 
-You'll be prompted for your API key from **agentdash.ink → Settings → API Keys**.
+### Adding a New Adapter
+To add an adapter, write a session collection function that returns an array of events and register it in `reporter.mjs` inside the `main` function. Adapters must satisfy this contract:
+1. **Input Interface:** Accept the parsed configuration object.
+2. **Output Event Contract:** Return a Promise resolving to an array of event objects with:
+   * `agent_id` (string), `status: 'running'`, `issue_title` (string), `progress_pct: 100`, `step_name` (string), and `metadata` (object).
+3. **Utility reuse:** Use functions exported by `utils.mjs`:
+   * `VERSION`: Current string version of the reporter.
+   * `loadJson(path)`: Safely parses JSON files, returning null on error.
+   * `resolvePath(path)`: Replaces `~` prefix with the user's home directory.
+   * `pathName(path)`: Returns a clean path representation (handles `tmp`, `dev`, `worktree` gracefully).
 
-### What the installer does
-
-1. Downloads `reporter.mjs` to `~/.agentdash/reporter/`
-2. Writes a config to `~/.agentdash/config.json`
-3. Installs a launchd plist at `~/Library/LaunchAgents/com.agentdash.reporter.plist`
-4. Runs the reporter once to verify everything works
-
-### Uninstall
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.agentdash.reporter.plist
-rm ~/Library/LaunchAgents/com.agentdash.reporter.plist
-rm -rf ~/.agentdash/reporter
-```
-
-## Manual config
-
-`~/.agentdash/config.json`:
-
-```json
-{
-  "api_key": "ad_live_your_key_here",
-  "api_url": "https://agentdash.ink",
-  "happy": { "enabled": true },
-  "kimi":  { "enabled": false }
-}
-```
-
-## Logs
-
-```bash
-tail -f /tmp/agentdash-reporter.log
-```
-
-## License
-
-MIT
+## Failure Modes & Error Handling
+* **Missing Config:** If `~/.agentdash/config.json` is missing or invalid, the process prints an error and exits (`exit 1`).
+* **Missing Tool / Tool Not Installed:**
+  * For Happy: If daemon file is missing, skipped. If `/list` fails, logs error and returns `[]`.
+  * For Kimi/Claude: If `pgrep` throws (not installed / no matches), caught and returns `[]`.
+* **Stale Happy Heartbeat:** If `daemonState.lastHeartbeat` is older than `120000`ms (2 minutes), logs `Happy daemon heartbeat stale — skipping` and returns `[]`.
+* **Stale Claude Session:** If `lastActivity` is older than 24 hours and has no matching process, the session is ignored.
+* **Unresolved Working Directory:** If `lsof` fails or the process lacks permissions, `cwd` defaults to `"unknown"`.
+* **Network & API Errors:** Posting retries up to 3 times with progressive delay (`attempt * 500`ms). A `401` status terminates immediately (`exit 1`).
