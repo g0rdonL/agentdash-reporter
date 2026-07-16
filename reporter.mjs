@@ -160,9 +160,66 @@ async function sendBatch(cfg, events) {
   }
 }
 
+// ── Verification ──
+
+async function runVerification() {
+  if (!existsSync(CONFIG_PATH)) {
+    console.log(`FAIL: config missing (not found at ${CONFIG_PATH})`);
+    process.exit(1);
+  }
+
+  let cfg;
+  try {
+    cfg = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
+  } catch (e) {
+    console.log(`FAIL: config parse error (${e.message})`);
+    process.exit(1);
+  }
+
+  if (!cfg.api_key || !cfg.api_key.startsWith('ad_live_')) {
+    console.log('FAIL: bad api_key (must start with "ad_live_")');
+    process.exit(1);
+  }
+
+  const api_url = (cfg.api_url || 'https://agentdash.ink').replace(/\/$/, '');
+  const url = `${api_url}/api/v1/emitter/status/batch`;
+  const headers = { Authorization: `Bearer ${cfg.api_key}` };
+
+  const testEvent = {
+    agent_id: 'verification-test',
+    status: 'running',
+    issue_title: 'Verification Test',
+    progress_pct: 100,
+    step_name: 'self-verification',
+    metadata: { reporter_version: VERSION, source: 'verify' }
+  };
+
+  try {
+    const resp = await httpPost(url, [testEvent], headers);
+    if (resp.status >= 200 && resp.status < 300) {
+      console.log('PASS');
+      process.exit(0);
+    } else if (resp.status === 401) {
+      console.log('FAIL: bad api_key');
+      process.exit(1);
+    } else {
+      console.log(`FAIL: backend error (HTTP ${resp.status})`);
+      process.exit(1);
+    }
+  } catch (e) {
+    console.log(`FAIL: network error (${e.message})`);
+    process.exit(1);
+  }
+}
+
 // ── Main ──
 
 async function main() {
+  if (process.argv.includes('--verify')) {
+    await runVerification();
+    return;
+  }
+
   const cfg = loadConfig();
   const started = Date.now();
 
