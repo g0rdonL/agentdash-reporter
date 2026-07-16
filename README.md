@@ -15,8 +15,8 @@ Run the following command:
 curl -fsSL https://agentdash.ink/install.sh | bash
 ```
 This installs the reporter files to `~/.agentdash/reporter` and sets up a background LaunchAgent running every 60 seconds.
-- **Log Location**: `/tmp/agentdash-reporter.log`
-- **Manual Verification**: Run `node ~/.agentdash/reporter/reporter.mjs`
+- **Log Location**: `~/.agentdash/reporter.log`
+- **Manual Verification**: Run `node ~/.agentdash/reporter/reporter.mjs --verify`
 
 ### Linux (systemd)
 Run the following command:
