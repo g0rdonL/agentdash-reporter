@@ -65,7 +65,7 @@ Run manually as a single-execution command:
 ```bash
 node reporter.mjs
 ```
-The plist service runs it every 60s, logging output to `/tmp/agentdash-reporter.log`.
+The plist service runs it every 60s, logging output to `~/.agentdash/reporter.log`.
 
 ### Adding a New Adapter
 To add an adapter, write a session collection function that returns an array of events and register it in `reporter.mjs` inside the `main` function. Adapters must satisfy this contract:
@@ -87,3 +87,48 @@ To add an adapter, write a session collection function that returns an array of 
 * **Stale Claude Session:** If `lastActivity` is older than 24 hours and has no matching process, the session is ignored.
 * **Unresolved Working Directory:** If `lsof` fails or the process lacks permissions, `cwd` defaults to `"unknown"`.
 * **Network & API Errors:** Posting retries up to 3 times with progressive delay (`attempt * 500`ms). A `401` status terminates immediately (`exit 1`).
+
+## Troubleshooting
+All agentdash-reporter runtime output is consolidated into a single log file. One `tail -f` command shows both stdout and stderr.
+
+### Log Path
+```bash
+tail -f ~/.agentdash/reporter.log
+```
+
+### Self-Verification Command
+Verify your agentdash-reporter installation health and configuration directly using:
+```bash
+node ~/.agentdash/reporter/reporter.mjs --verify
+```
+
+### 3 Most Likely Failure Modes & Exact Log Lines
+
+1. **Missing Configuration File**
+   * **Cause:** The configuration file does not exist at `~/.agentdash/config.json`.
+   * **Exact Log Output (on verify):**
+     ```
+     FAIL: config missing (not found at ~/.agentdash/config.json)
+     ```
+
+2. **Invalid API Key**
+   * **Cause:** The API key in the configuration is missing, does not start with `ad_live_`, or has been rejected by the backend server.
+   * **Exact Log Output (on verify - local pattern validation failure):**
+     ```
+     FAIL: bad api_key (must start with "ad_live_")
+     ```
+   * **Exact Log Output (on verify - server auth failure):**
+     ```
+     FAIL: bad api_key
+     ```
+
+3. **Backend Unreachable / Network Issue**
+   * **Cause:** The host is offline, DNS resolution failed, or the backend returned a non-2xx status code.
+   * **Exact Log Output (on verify - network error):**
+     ```
+     FAIL: network error (getaddrinfo ENOTFOUND agentdash.ink)
+     ```
+   * **Exact Log Output (on verify - backend error response):**
+     ```
+     FAIL: backend error (HTTP 502)
+     ```

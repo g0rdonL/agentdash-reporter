@@ -24,13 +24,21 @@ if [ "$NODE_VERSION" -lt 18 ]; then
 fi
 echo "Node.js: $(node --version) ✓"
 
-# Download reporter
+# Download reporter or copy local files if present
 mkdir -p "$INSTALL_DIR"
-echo "Downloading reporter to $INSTALL_DIR..."
-curl -fsSL "$REPO_URL/reporter.mjs"   -o "$INSTALL_DIR/reporter.mjs"
-curl -fsSL "$REPO_URL/utils.mjs"      -o "$INSTALL_DIR/utils.mjs"
-curl -fsSL "$REPO_URL/claude.mjs"     -o "$INSTALL_DIR/claude.mjs"
-curl -fsSL "$REPO_URL/package.json"   -o "$INSTALL_DIR/package.json"
+if [ -f "./reporter.mjs" ] && [ -f "./utils.mjs" ]; then
+  echo "Local files detected — copying to $INSTALL_DIR..."
+  cp "./reporter.mjs" "$INSTALL_DIR/reporter.mjs"
+  cp "./utils.mjs" "$INSTALL_DIR/utils.mjs"
+  cp "./claude.mjs" "$INSTALL_DIR/claude.mjs"
+  cp "./package.json" "$INSTALL_DIR/package.json"
+else
+  echo "Downloading reporter to $INSTALL_DIR..."
+  curl -fsSL "$REPO_URL/reporter.mjs"   -o "$INSTALL_DIR/reporter.mjs"
+  curl -fsSL "$REPO_URL/utils.mjs"      -o "$INSTALL_DIR/utils.mjs"
+  curl -fsSL "$REPO_URL/claude.mjs"     -o "$INSTALL_DIR/claude.mjs"
+  curl -fsSL "$REPO_URL/package.json"   -o "$INSTALL_DIR/package.json"
+fi
 chmod +x "$INSTALL_DIR/reporter.mjs"
 echo "Downloaded ✓"
 
@@ -61,6 +69,7 @@ fi
 
 # Install launchd plist
 NODE_BIN=$(command -v node)
+mkdir -p "$(dirname "$PLIST_PATH")"
 cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -78,9 +87,9 @@ cat > "$PLIST_PATH" <<EOF
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/tmp/agentdash-reporter.log</string>
+  <string>$HOME/.agentdash/reporter.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/agentdash-reporter.log</string>
+  <string>$HOME/.agentdash/reporter.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
@@ -90,16 +99,27 @@ cat > "$PLIST_PATH" <<EOF
 </plist>
 EOF
 
-# Load the plist
-launchctl unload "$PLIST_PATH" 2>/dev/null || true
-launchctl load "$PLIST_PATH"
-echo "LaunchAgent installed and started ✓"
+# Load the plist on macOS
+if command -v launchctl &>/dev/null; then
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  launchctl load "$PLIST_PATH"
+  echo "LaunchAgent installed and started ✓"
+else
+  echo "Skipping launchctl (launchctl command not found) ✓"
+fi
 
 # Test run
 echo ""
 echo "Running reporter once to verify..."
-node "$INSTALL_DIR/reporter.mjs" && echo "" && echo "Installation complete!"
+if node "$INSTALL_DIR/reporter.mjs" --verify; then
+  echo ""
+  echo "Installation complete!"
+else
+  echo ""
+  echo "Verification failed. Please check the failure reason above."
+  exit 1
+fi
 echo ""
 echo "Sessions will report every 60 seconds."
-echo "View logs: tail -f /tmp/agentdash-reporter.log"
+echo "View logs: tail -f $HOME/.agentdash/reporter.log"
 echo "Dashboard: https://agentdash.ink"
