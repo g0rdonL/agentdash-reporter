@@ -3,7 +3,42 @@
 The AgentDash Reporter is a lightweight, zero-dependency Node.js service that monitors your local AI coding sessions and reports their status to [AgentDash](https://agentdash.ink). It acts as an emitter client, collecting local session events and reporting them in batches to the AgentDash status API.
 
 ## How It Works & Architecture
-The reporter runs as a macOS background service (`launchd`) every 60 seconds. During each run, it polls active agents from registered adapters and sends a JSON payload via an HTTP POST request to `<api_url>/api/v1/emitter/status/batch` with your `Authorization: Bearer <api_key>` header.
+The reporter runs as a background service (macOS `launchd` or Linux `systemd`) every 60 seconds. During each run, it polls active agents from registered adapters and sends a JSON payload via an HTTP POST request to `<api_url>/api/v1/emitter/status/batch` with your `Authorization: Bearer <api_key>` header.
+
+## Installation
+
+To install the AgentDash Reporter:
+
+### macOS (launchd)
+Run the following command:
+```bash
+curl -fsSL https://agentdash.ink/install.sh | bash
+```
+This installs the reporter files to `~/.agentdash/reporter` and sets up a background LaunchAgent running every 60 seconds.
+- **Log Location**: `/tmp/agentdash-reporter.log`
+- **Manual Verification**: Run `node ~/.agentdash/reporter/reporter.mjs`
+
+### Linux (systemd)
+Run the following command:
+```bash
+curl -fsSL https://agentdash.ink/install.sh | bash
+```
+This installs the reporter files to `~/.agentdash/reporter` and registers a user-level systemd service (`agentdash-reporter.service`) triggered by a systemd timer (`agentdash-reporter.timer`) every 60 seconds.
+- **Log Location**: `journalctl --user -u agentdash-reporter`
+- **Manual Verification**: Run `node ~/.agentdash/reporter/reporter.mjs`
+
+---
+
+## Uninstallation
+
+To cleanly stop the reporter background service and remove all installed files (while preserving your configuration at `~/.agentdash/config.json`):
+
+```bash
+curl -fsSL https://agentdash.ink/install.sh | bash -s uninstall
+```
+*(Alternatively, if you have the repository or script locally: `./install.sh uninstall`)*
+
+---
 
 ## Adapters
 
@@ -65,7 +100,7 @@ Run manually as a single-execution command:
 ```bash
 node reporter.mjs
 ```
-The plist service runs it every 60s, logging output to `~/.agentdash/reporter.log`.
+The background service runs it every 60s, logging output to `~/.agentdash/reporter.log` on macOS or `journalctl --user -u agentdash-reporter` on Linux.
 
 ### Adding a New Adapter
 To add an adapter, write a session collection function that returns an array of events and register it in `reporter.mjs` inside the `main` function. Adapters must satisfy this contract:

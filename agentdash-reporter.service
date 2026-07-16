@@ -1,0 +1,10 @@
+[Unit]
+Description=AgentDash Reporter Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={{NODE_BIN}} {{INSTALL_DIR}}/reporter.mjs
+Restart=on-failure
+RestartSec=5s
+Environment=HOME={{HOME}}
