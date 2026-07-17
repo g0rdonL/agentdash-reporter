@@ -167,3 +167,16 @@ node ~/.agentdash/reporter/reporter.mjs --verify
      ```
      FAIL: backend error (HTTP 502)
      ```
+
+### Other Common Issues
+
+* **`--verify` passes but no sessions show on the dashboard:** The reporter only reports *active* sessions — make sure a Claude Code, Kimi Code, or Happy session is actually running. Also check that the relevant adapter is enabled in `~/.agentdash/config.json` (`--verify` lists enabled adapters in its PASS line).
+* **Reporter not running at all:** Verify the service is loaded:
+  ```bash
+  # macOS
+  launchctl list | grep agentdash
+  # Linux
+  systemctl --user status agentdash-reporter.timer
+  ```
+  Reload if needed (macOS): `launchctl unload ~/Library/LaunchAgents/com.agentdash.reporter.plist && launchctl load ~/Library/LaunchAgents/com.agentdash.reporter.plist`
+* **Log file missing:** The installer creates `~/.agentdash/` automatically. If the directory was deleted, `--verify` now recreates it (and fails loudly if it can't); or re-run the installer.
