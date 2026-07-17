@@ -9,20 +9,20 @@ launchd service, curl | bash install. The install experience IS the product
 
 ## Now
 
-- [ ] R1: Claude Code session adapter — native Claude Code sessions detected
+- [x] R1: Claude Code session adapter — native Claude Code sessions detected
       and reported alongside Happy and Kimi Code — why: most prospective
-      users run plain Claude Code, not the Happy harness.
+      users run plain Claude Code, not the Happy harness. **Shipped** (#3
+      adapter + tests, #4 docs).
 
-## Next
-
-- [ ] R2: Reporter health is self-evident — install verifies end-to-end and
+- [x] R2: Reporter health is self-evident — install verifies end-to-end and
       a dead/broken reporter is diagnosable from one log location documented
       in the README — why: a silently dead reporter looks like "no agents
-      running" upstream.
+      running" upstream. **Shipped** (#5 `--verify` + single log; hardened
+      with log-writability + adapter checks).
 
 ## Later
 
-- R3: Linux support (systemd unit) for server-hosted agents.
+- [x] R3: Linux support (systemd unit) for server-hosted agents. **Shipped** (#6).
 
 ## Non-goals
 

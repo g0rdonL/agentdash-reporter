@@ -2,7 +2,7 @@
 // AgentDash Reporter — watches local AI coding sessions and reports status
 // Runs every 60s via launchd. No dependencies beyond Node.js built-ins.
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -185,6 +185,24 @@ async function runVerification() {
   const url = `${api_url}/api/v1/emitter/status/batch`;
   const headers = { Authorization: `Bearer ${cfg.api_key}` };
 
+  // Log writability — a reporter that can't write its log dies silently,
+  // which is exactly the failure mode --verify exists to surface.
+  const logPath = join(homedir(), '.agentdash', 'reporter.log');
+  try {
+    mkdirSync(join(homedir(), '.agentdash'), { recursive: true });
+    appendFileSync(logPath, '');
+  } catch (e) {
+    console.log(`FAIL: log not writable (${logPath} — ${e.message})`);
+    process.exit(1);
+  }
+
+  // Adapter visibility — all-disabled passes config parsing but reports nothing.
+  const adapters = ['happy', 'kimi', 'claude'].filter(a => cfg[a]?.enabled);
+  if (adapters.length === 0) {
+    console.log('FAIL: no adapters enabled (enable at least one of happy/kimi/claude in config)');
+    process.exit(1);
+  }
+
   const testEvent = {
     agent_id: 'verification-test',
     status: 'running',
@@ -197,7 +215,7 @@ async function runVerification() {
   try {
     const resp = await httpPost(url, [testEvent], headers);
     if (resp.status >= 200 && resp.status < 300) {
-      console.log('PASS');
+      console.log(`PASS (adapters: ${adapters.join(', ')}; log: ${logPath})`);
       process.exit(0);
     } else if (resp.status === 401) {
       console.log('FAIL: bad api_key');
