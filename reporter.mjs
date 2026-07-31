@@ -8,6 +8,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { VERSION, loadJson, resolvePath, httpPost, pathName } from './utils.mjs';
 import { collectClaudeSessions } from './claude.mjs';
+import { collectOpenCodeSessions } from './opencode.mjs';
 
 export { VERSION, loadJson, resolvePath, httpPost, pathName };
 
@@ -35,6 +36,7 @@ function loadConfig() {
       happy:  { enabled: cfg.happy?.enabled !== false, ...cfg.happy },
       kimi:   { enabled: cfg.kimi?.enabled  === true,  ...cfg.kimi  },
       claude: { enabled: cfg.claude?.enabled !== false, ...cfg.claude },
+      opencode: { enabled: cfg.opencode?.enabled !== false, ...cfg.opencode },
     };
   } catch (e) {
     console.error(`[agentdash-reporter] Failed to parse config: ${e.message}`);
@@ -197,9 +199,9 @@ async function runVerification() {
   }
 
   // Adapter visibility — all-disabled passes config parsing but reports nothing.
-  const adapters = ['happy', 'kimi', 'claude'].filter(a => cfg[a]?.enabled);
+  const adapters = ['happy', 'kimi', 'claude', 'opencode'].filter(a => cfg[a]?.enabled);
   if (adapters.length === 0) {
-    console.log('FAIL: no adapters enabled (enable at least one of happy/kimi/claude in config)');
+    console.log('FAIL: no adapters enabled (enable at least one of happy/kimi/claude/opencode in config)');
     process.exit(1);
   }
 
@@ -242,9 +244,10 @@ async function main() {
   const started = Date.now();
 
   const events = [];
-  if (cfg.happy.enabled)  events.push(...await collectHappySessions(cfg));
-  if (cfg.kimi.enabled)   events.push(...await collectKimiSessions());
-  if (cfg.claude.enabled) events.push(...await collectClaudeSessions(cfg));
+  if (cfg.happy.enabled)    events.push(...await collectHappySessions(cfg));
+  if (cfg.kimi.enabled)     events.push(...await collectKimiSessions());
+  if (cfg.claude.enabled)   events.push(...await collectClaudeSessions(cfg));
+  if (cfg.opencode.enabled) events.push(...await collectOpenCodeSessions(cfg));
 
   if (!events.length) {
     console.log('[agentdash-reporter] No active sessions found');

@@ -11,5 +11,8 @@
   },
   "claude": {
     "enabled": true
+  },
+  "opencode": {
+    "enabled": true
   }
 }

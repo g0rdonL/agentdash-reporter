@@ -78,6 +78,20 @@ curl -fsSL https://agentdash.ink/install.sh | bash -s uninstall
   * `step_name`: `"claude · <state> · pid <pid>"` (where `state` is `'active'` or `'idle'`).
   * `metadata`: `{ reporter_version, source: 'claude', state, path, last_activity, host_pid }`
 
+### OpenCode Adapter
+* **Tool Detected:** OpenCode SQLite database and running opencode processes.
+* **Session Discovery:**
+  1. Process scans via `pgrep -f 'opencode'` to find running OpenCode processes and their `cwd` using `lsof`.
+  2. Queries the local SQLite database at `~/.local/share/opencode/opencode.db` using the `sqlite3` CLI tool to get session records, including directories and timestamps.
+  3. Correlates running processes with database session records using an exact match on directory/CWD.
+* **Emitted Fields:**
+  * `agent_id`: `id` from the SQLite session table (e.g., `"ses_..."`), or `"opencode-<pid>"` if process-only/fileless fallback.
+  * `status`: `'running'`
+  * `issue_title`: Cleaned basename of the resolved directory.
+  * `progress_pct`: `100`
+  * `step_name`: `"opencode · <state>${matchingProcess ? ` · pid ${matchingProcess.pid}` : ''}"` (where `state` is `'active'` or `'idle'`).
+  * `metadata`: `{ reporter_version, source: 'opencode', state, path, last_activity, host_pid }`
+
 ## Session State Derivation
 The reporter code only emits a `status` of `'running'`. It has **no** native concept or state variables for `thinking`, `waiting`, or `disconnected`. State metadata is limited to:
 * **`active`**: A Claude Code session with a running process (or any running Happy/Kimi session).
@@ -92,6 +106,7 @@ Config is loaded from `~/.agentdash/config.json`. The codebase reads the followi
 * **`happy.session_titles_path`**: Default: `"~/.happy/session-titles.json"`.
 * **`kimi.enabled`**: Default: `false`.
 * **`claude.enabled`**: Default: `true`.
+  * **`opencode.enabled`**: Default: `true`.
 * **`HOME`**: The primary environment variable used to resolve path tildes (`~`) and locate config/cache files.
 
 ## Developer Interface & How to Run
@@ -170,7 +185,7 @@ node ~/.agentdash/reporter/reporter.mjs --verify
 
 ### Other Common Issues
 
-* **`--verify` passes but no sessions show on the dashboard:** The reporter only reports *active* sessions — make sure a Claude Code, Kimi Code, or Happy session is actually running. Also check that the relevant adapter is enabled in `~/.agentdash/config.json` (`--verify` lists enabled adapters in its PASS line).
+* **`--verify` passes but no sessions show on the dashboard:** The reporter only reports *active* sessions — make sure a Claude Code, Kimi Code, OpenCode, or Happy session is actually running. Also check that the relevant adapter is enabled in `~/.agentdash/config.json` (`--verify` lists enabled adapters in its PASS line).
 * **Reporter not running at all:** Verify the service is loaded:
   ```bash
   # macOS
