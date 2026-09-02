@@ -92,6 +92,20 @@ curl -fsSL https://agentdash.ink/install.sh | bash -s uninstall
   * `step_name`: `"opencode · <state>${matchingProcess ? ` · pid ${matchingProcess.pid}` : ''}"` (where `state` is `'active'` or `'idle'`).
   * `metadata`: `{ reporter_version, source: 'opencode', state, path, last_activity, host_pid }`
 
+### Codex Adapter
+* **Tool Detected:** Codex CLI processes and session files.
+* **Session Discovery:**
+  1. Process scans via `pgrep -f 'codex'` to find running Codex processes and their `cwd` using `lsof`.
+  2. Recursively scans `~/.codex/sessions/` (nested `YYYY/MM/DD/` date directories, one `rollout-<ISO-timestamp>-<uuid>.jsonl` file per session).
+  3. Parses the first line of each file (`type: "session_meta"`) for the authoritative `payload.id` (session id) and `payload.cwd` (project path) — never decoded from the file or directory name. Parses the last line's top-level `timestamp` for recency/last-activity, falling back to file mtime.
+* **Emitted Fields:**
+  * `agent_id`: `payload.id` from `session_meta`, or the filename stem if `session_meta` is missing/unparsable.
+  * `status`: `'running'`
+  * `issue_title`: Cleaned basename of `payload.cwd` (or `'unknown'` if absent).
+  * `progress_pct`: `100`
+  * `step_name`: `"codex · <state>${matchingProcess ? ` · pid ${pid}` : ''}"` (where `state` is `'active'` or `'idle'`).
+  * `metadata`: `{ reporter_version, source: 'codex', state, path, last_activity, host_pid }`
+
 ## Session State Derivation
 The reporter code only emits a `status` of `'running'`. It has **no** native concept or state variables for `thinking`, `waiting`, or `disconnected`. State metadata is limited to:
 * **`active`**: A Claude Code session with a running process (or any running Happy/Kimi session).
@@ -107,6 +121,7 @@ Config is loaded from `~/.agentdash/config.json`. The codebase reads the followi
 * **`kimi.enabled`**: Default: `false`.
 * **`claude.enabled`**: Default: `true`.
   * **`opencode.enabled`**: Default: `true`.
+  * **`codex.enabled`**: Default: `true`.
 * **`HOME`**: The primary environment variable used to resolve path tildes (`~`) and locate config/cache files.
 
 ## Developer Interface & How to Run
@@ -185,7 +200,7 @@ node ~/.agentdash/reporter/reporter.mjs --verify
 
 ### Other Common Issues
 
-* **`--verify` passes but no sessions show on the dashboard:** The reporter only reports *active* sessions — make sure a Claude Code, Kimi Code, OpenCode, or Happy session is actually running. Also check that the relevant adapter is enabled in `~/.agentdash/config.json` (`--verify` lists enabled adapters in its PASS line).
+* **`--verify` passes but no sessions show on the dashboard:** The reporter only reports *active* sessions — make sure a Claude Code, Kimi Code, OpenCode, Codex, or Happy session is actually running. Also check that the relevant adapter is enabled in `~/.agentdash/config.json` (`--verify` lists enabled adapters in its PASS line).
 * **Reporter not running at all:** Verify the service is loaded:
   ```bash
   # macOS

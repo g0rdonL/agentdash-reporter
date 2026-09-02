@@ -9,6 +9,7 @@ import { join } from 'path';
 import { VERSION, loadJson, resolvePath, httpPost, pathName } from './utils.mjs';
 import { collectClaudeSessions } from './claude.mjs';
 import { collectOpenCodeSessions } from './opencode.mjs';
+import { collectCodexSessions } from './codex.mjs';
 
 export { VERSION, loadJson, resolvePath, httpPost, pathName };
 
@@ -37,6 +38,7 @@ function loadConfig() {
       kimi:   { enabled: cfg.kimi?.enabled  === true,  ...cfg.kimi  },
       claude: { enabled: cfg.claude?.enabled !== false, ...cfg.claude },
       opencode: { enabled: cfg.opencode?.enabled !== false, ...cfg.opencode },
+      codex: { enabled: cfg.codex?.enabled !== false, ...cfg.codex },
     };
   } catch (e) {
     console.error(`[agentdash-reporter] Failed to parse config: ${e.message}`);
@@ -199,9 +201,9 @@ async function runVerification() {
   }
 
   // Adapter visibility — all-disabled passes config parsing but reports nothing.
-  const adapters = ['happy', 'kimi', 'claude', 'opencode'].filter(a => cfg[a]?.enabled);
+  const adapters = ['happy', 'kimi', 'claude', 'opencode', 'codex'].filter(a => cfg[a]?.enabled);
   if (adapters.length === 0) {
-    console.log('FAIL: no adapters enabled (enable at least one of happy/kimi/claude/opencode in config)');
+    console.log('FAIL: no adapters enabled (enable at least one of happy/kimi/claude/opencode/codex in config)');
     process.exit(1);
   }
 
@@ -248,6 +250,7 @@ async function main() {
   if (cfg.kimi.enabled)     events.push(...await collectKimiSessions());
   if (cfg.claude.enabled)   events.push(...await collectClaudeSessions(cfg));
   if (cfg.opencode.enabled) events.push(...await collectOpenCodeSessions(cfg));
+  if (cfg.codex.enabled)    events.push(...await collectCodexSessions(cfg));
 
   if (!events.length) {
     console.log('[agentdash-reporter] No active sessions found');
