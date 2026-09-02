@@ -24,6 +24,11 @@ launchd service, curl | bash install. The install experience IS the product
 
 - [x] R3: Linux support (systemd unit) for server-hosted agents. **Shipped** (#6).
 
+- [x] R4: More emitter adapters — OpenCode and Codex CLI sessions detected
+      alongside Claude Code — why: prospective users run a mix of coding
+      agents, not just Claude Code. **Shipped** (#9 OpenCode, Codex adapter
+      this change).
+
 ## Non-goals
 
 - npm packages or any runtime dependency (zero-dep constraint is load-bearing).
